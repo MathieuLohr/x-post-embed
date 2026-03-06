@@ -1,7 +1,6 @@
 import {
 	App,
 	Editor,
-	EditorPosition,
 	MarkdownView,
 	Modal,
 	Notice,
@@ -59,6 +58,29 @@ function extractTweetId(url: string): string | null {
 	return match ? match[1] : null;
 }
 
+interface FxTweet {
+	text?: string;
+	url?: string;
+	created_at?: string;
+	likes?: number;
+	reposts?: number;
+	replies?: number;
+	views?: number;
+	bookmarks?: number;
+	community_note?: string;
+	author?: {
+		name?: string;
+		screen_name?: string;
+		description?: string;
+		location?: string;
+		followers?: number;
+	};
+	media?: {
+		all?: { url: string }[];
+	};
+	quote?: FxTweet;
+}
+
 interface TweetData {
 	url: string;
 	author_name: string;
@@ -101,7 +123,7 @@ class TweetUrlModal extends Modal {
 
 	onOpen() {
 		const { contentEl } = this;
-		contentEl.createEl("h2", { text: "Save X Post" });
+		contentEl.createEl("h2", { text: "Save X post" });
 
 		const inputEl = contentEl.createEl("input", {
 			type: "text",
@@ -117,13 +139,15 @@ class TweetUrlModal extends Modal {
 			text: "Paste from clipboard",
 		});
 		pasteBtn.addClass("mod-cta");
-		pasteBtn.addEventListener("click", async () => {
-			try {
-				const text = await navigator.clipboard.readText();
-				inputEl.value = text;
-			} catch {
-				new Notice("Failed to read clipboard");
-			}
+		pasteBtn.addEventListener("click", () => {
+			void (async () => {
+				try {
+					const text = await navigator.clipboard.readText();
+					inputEl.value = text;
+				} catch {
+					new Notice("Failed to read clipboard");
+				}
+			})();
 		});
 
 		const openToggle = new Setting(controlsRow)
@@ -167,14 +191,14 @@ export default class XPostEmbedPlugin extends Plugin {
 		await this.loadSettings();
 
 		// Ribbon icon
-		this.addRibbonIcon("twitter", "Save X Post", () => {
+		this.addRibbonIcon("twitter", "Save X post", () => {
 			this.openTweetUrlModal();
 		});
 
 		// Command palette
 		this.addCommand({
 			id: "save-x-post",
-			name: "Save X Post",
+			name: "Save X post",
 			callback: () => {
 				this.openTweetUrlModal();
 			},
@@ -280,12 +304,12 @@ export default class XPostEmbedPlugin extends Plugin {
 						}
 
 						if (hasErrors) {
-							new Notice("Failed to fetch some tweets. Left as raw URLs.");
+							new Notice("Failed to fetch some tweets. Left as raw URLs");
 						}
 
 						// Save pasted tweets as notes + update author pages
 						if (this.settings.saveOnPaste && successfulTweets.length > 0) {
-							Promise.allSettled(
+							void Promise.allSettled(
 								successfulTweets.map(data =>
 									this.saveTweetAsNote(data).catch(e => {
 										console.error("Failed to save pasted tweet:", e);
@@ -295,7 +319,7 @@ export default class XPostEmbedPlugin extends Plugin {
 						}
 					} catch {
 						new Notice(
-							"Failed to fetch tweets. URLs left as-is."
+							"Failed to fetch tweets. URLs left as-is"
 						);
 					}
 				}
@@ -354,7 +378,7 @@ export default class XPostEmbedPlugin extends Plugin {
 				tweet_text: tweet.text || "",
 				thread_texts: [this.extractTextWithQuotes(tweet)],
 				tweet_date: date,
-				media_urls: tweet.media?.all?.map((m: any) => m.url) || [],
+				media_urls: tweet.media?.all?.map((m: { url: string }) => m.url) || [],
 				community_note: tweet.community_note || null,
 				metrics: {
 					likes: tweet.likes || 0,
@@ -376,7 +400,7 @@ export default class XPostEmbedPlugin extends Plugin {
 
 		let thread_texts: string[] = [];
 		if (json.thread && Array.isArray(json.thread)) {
-			thread_texts = json.thread.map((t: any) => this.extractTextWithQuotes(t));
+			thread_texts = json.thread.map((t: FxTweet) => this.extractTextWithQuotes(t));
 		} else {
 			thread_texts = [this.extractTextWithQuotes(focalTweet)];
 		}
@@ -393,7 +417,7 @@ export default class XPostEmbedPlugin extends Plugin {
 			tweet_text: focalTweet.text || "",
 			thread_texts,
 			tweet_date: date,
-			media_urls: focalTweet.media?.all?.map((m: any) => m.url) || [],
+			media_urls: focalTweet.media?.all?.map((m: { url: string }) => m.url) || [],
 			community_note: focalTweet.community_note || null,
 			metrics: {
 				likes: focalTweet.likes || 0,
@@ -436,7 +460,7 @@ export default class XPostEmbedPlugin extends Plugin {
 		return null;
 	}
 
-	private extractTextWithQuotes(tweet: any): string {
+	private extractTextWithQuotes(tweet: FxTweet): string {
 		let text = tweet.text || "";
 		if (tweet.quote) {
 			const quoteAuthor =
@@ -487,11 +511,11 @@ export default class XPostEmbedPlugin extends Plugin {
 
 	// --- Shared utilities ---
 
-	async requestWithRetries(
-		fn: () => Promise<any>,
+	async requestWithRetries<T>(
+		fn: () => Promise<T>,
 		retries: number,
 		delay: number
-	): Promise<any> {
+	): Promise<T> {
 		for (let i = 0; i < retries; i++) {
 			try {
 				return await fn();
@@ -659,7 +683,7 @@ export default class XPostEmbedPlugin extends Plugin {
 
 		if (hasErrors) {
 			new Notice(
-				"Some tweets failed to fetch and were left as raw URLs."
+				"Some tweets failed to fetch and were left as raw URLs"
 			);
 		}
 
@@ -691,39 +715,41 @@ export default class XPostEmbedPlugin extends Plugin {
 	openTweetUrlModal() {
 		new TweetUrlModal(
 			this.app,
-			async (tweetUrl: string, openAfterSave: boolean) => {
+			(tweetUrl: string, openAfterSave: boolean) => {
 				if (!tweetUrl.trim()) {
 					new Notice("Please enter a valid tweet URL");
 					return;
 				}
 
 				new Notice("Fetching tweet data...");
-				try {
-					const tweetData = await this.fetchTweetData(tweetUrl);
-					const savedPath = await this.saveTweetAsNote(tweetData);
-					new Notice("Tweet saved successfully!");
+				void (async () => {
+					try {
+						const tweetData = await this.fetchTweetData(tweetUrl);
+						const savedPath = await this.saveTweetAsNote(tweetData);
+						new Notice("Tweet saved successfully!");
 
-					if (this.settings.copyPathToClipboard) {
-						const wikiLink = `[[${savedPath.replace(
-							/\.md$/,
-							""
-						)}]]`;
-						await navigator.clipboard.writeText(wikiLink);
-						new Notice("Wiki link copied to clipboard!");
-					}
-
-					if (openAfterSave) {
-						const file =
-							this.app.vault.getAbstractFileByPath(savedPath);
-						if (file && file instanceof TFile) {
-							await this.app.workspace
-								.getLeaf()
-								.openFile(file);
+						if (this.settings.copyPathToClipboard) {
+							const wikiLink = `[[${savedPath.replace(
+								/\.md$/,
+								""
+							)}]]`;
+							await navigator.clipboard.writeText(wikiLink);
+							new Notice("Wiki link copied to clipboard!");
 						}
+
+						if (openAfterSave) {
+							const file =
+								this.app.vault.getAbstractFileByPath(savedPath);
+							if (file && file instanceof TFile) {
+								await this.app.workspace
+									.getLeaf()
+									.openFile(file);
+							}
+						}
+					} catch {
+						new Notice("Error fetching tweet data");
 					}
-				} catch {
-					new Notice("Error fetching tweet data");
-				}
+				})();
 			},
 			this.settings.openAfterSave
 		).open();
@@ -937,7 +963,7 @@ class XPostEmbedSettingTab extends PluginSettingTab {
 			.setDesc("Folder where saved tweets are stored.")
 			.addText((text) =>
 				text
-					.setPlaceholder("Tweets")
+					.setPlaceholder("tweets")
 					.setValue(this.plugin.settings.tweetsFolder)
 					.onChange(async (value) => {
 						this.plugin.settings.tweetsFolder =
@@ -963,7 +989,7 @@ class XPostEmbedSettingTab extends PluginSettingTab {
 			.setDesc("Folder where per-author aggregation pages are stored.")
 			.addText((text) =>
 				text
-					.setPlaceholder("Tweets/Authors")
+					.setPlaceholder("tweets/authors")
 					.setValue(this.plugin.settings.authorPagesFolder)
 					.onChange(async (value) => {
 						this.plugin.settings.authorPagesFolder =
@@ -1035,7 +1061,7 @@ class XPostEmbedSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Save pasted tweets as notes")
 			.setDesc(
-				"Also save each pasted tweet as a note file and update the author page (like the Save X Post command)."
+				"Also save each pasted tweet as a note file and update the author page (like the Save X post command)."
 			)
 			.addToggle((toggle) =>
 				toggle
@@ -1104,7 +1130,7 @@ class XPostEmbedSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Include community note")
-			.setDesc("If a Tweet has a community note, append it as a warning callout.")
+			.setDesc("If a tweet has a community note, append it as a warning callout.")
 			.addToggle((toggle) =>
 				toggle
 					.setValue(this.plugin.settings.includeCommunityNote)
@@ -1127,7 +1153,7 @@ class XPostEmbedSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Include author bio (Save Command only)")
+			.setName("Include author bio (save command only)")
 			.setDesc("Add the author's description, location, and follower count to the YAML frontmatter of the saved note.")
 			.addToggle((toggle) =>
 				toggle
