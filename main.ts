@@ -81,6 +81,26 @@ interface FxTweet {
 	quote?: FxTweet;
 }
 
+interface FxThreadResponse {
+	code: number;
+	status: FxTweet;
+	thread?: FxTweet[];
+	author?: FxTweet["author"];
+}
+
+interface FxSingleResponse {
+	code: number;
+	tweet?: FxTweet;
+	message?: string;
+}
+
+interface OEmbedResponse {
+	url: string;
+	author_name: string;
+	author_url: string;
+	html: string;
+}
+
 interface TweetData {
 	url: string;
 	author_name: string;
@@ -304,7 +324,7 @@ export default class XPostEmbedPlugin extends Plugin {
 						}
 
 						if (hasErrors) {
-							new Notice("Failed to fetch some tweets. Left as raw URLs");
+							new Notice("Failed to fetch some tweets. Left as raw links");
 						}
 
 						// Save pasted tweets as notes + update author pages
@@ -319,7 +339,7 @@ export default class XPostEmbedPlugin extends Plugin {
 						}
 					} catch {
 						new Notice(
-							"Failed to fetch tweets. URLs left as-is"
+							"Failed to fetch tweets, links left as-is"
 						);
 					}
 				}
@@ -353,20 +373,20 @@ export default class XPostEmbedPlugin extends Plugin {
 			2000
 		);
 
-		const json = response.json;
+		const json = response.json as FxThreadResponse;
 		if (json.code !== 200 || !json.status) {
 			// Try single status endpoint if thread fails
 			const singleApiUrl = `https://api.fxtwitter.com/i/status/${tweetId}`;
 			const singleResponse = await requestUrl({ url: singleApiUrl, method: "GET" });
-			const singleJson = singleResponse.json;
+			const singleJson = singleResponse.json as FxSingleResponse;
 
 			if (singleJson.code !== 200 || !singleJson.tweet) {
 				throw new Error(singleJson.message || "FxTwitter API error");
 			}
 
-			const tweet = singleJson.tweet;
+			const tweet: FxTweet = singleJson.tweet;
 			const author = tweet.author ?? {};
-			const date = this.formatDateFromFx(tweet.created_at);
+			const date = this.formatDateFromFx(tweet.created_at ?? "");
 
 			return {
 				url: tweet.url || tweetUrl,
@@ -395,7 +415,7 @@ export default class XPostEmbedPlugin extends Plugin {
 			};
 		}
 
-		const focalTweet = json.status;
+		const focalTweet: FxTweet = json.status;
 		const author = focalTweet.author ?? json.author ?? {};
 
 		let thread_texts: string[] = [];
@@ -405,7 +425,7 @@ export default class XPostEmbedPlugin extends Plugin {
 			thread_texts = [this.extractTextWithQuotes(focalTweet)];
 		}
 
-		const date = this.formatDateFromFx(focalTweet.created_at);
+		const date = this.formatDateFromFx(focalTweet.created_at ?? "");
 
 		return {
 			url: focalTweet.url || tweetUrl,
@@ -490,7 +510,7 @@ export default class XPostEmbedPlugin extends Plugin {
 			2000
 		);
 
-		const { url, author_name, author_url, html } = response.json;
+		const { url, author_name, author_url, html } = response.json as OEmbedResponse;
 		const tweet_text = this.extractTweetText(html);
 		const tweet_date = this.extractTweetDate(html);
 
@@ -683,7 +703,7 @@ export default class XPostEmbedPlugin extends Plugin {
 
 		if (hasErrors) {
 			new Notice(
-				"Some tweets failed to fetch and were left as raw URLs"
+				"Some tweets failed to fetch and were left as raw links"
 			);
 		}
 
@@ -865,7 +885,7 @@ export default class XPostEmbedPlugin extends Plugin {
 	}
 
 	private async applyAuthorFrontmatter(file: TFile, data: TweetData): Promise<void> {
-		await this.app.fileManager.processFrontMatter(file, (fm) => {
+		await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
 			fm.author = data.author_name;
 			fm.author_screen_name = data.author_screen_name || this.sanitizeFileName(data.author_name);
 			fm.author_url = data.author_url;
@@ -911,7 +931,7 @@ export default class XPostEmbedPlugin extends Plugin {
 
 	private async applyTweetFrontmatter(file: TFile, data: TweetData): Promise<void> {
 		const now = new Date().toISOString();
-		await this.app.fileManager.processFrontMatter(file, (fm) => {
+		await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
 			fm.author = data.author_name;
 			fm.author_url = data.author_url;
 			if (this.settings.includeAuthorBio && data.author_bio) {
@@ -931,7 +951,7 @@ export default class XPostEmbedPlugin extends Plugin {
 		this.settings = Object.assign(
 			{},
 			DEFAULT_SETTINGS,
-			await this.loadData()
+			await this.loadData() as Partial<XPostEmbedSettings>
 		);
 	}
 
@@ -963,7 +983,7 @@ class XPostEmbedSettingTab extends PluginSettingTab {
 			.setDesc("Folder where saved tweets are stored.")
 			.addText((text) =>
 				text
-					.setPlaceholder("tweets")
+					.setPlaceholder("Tweets")
 					.setValue(this.plugin.settings.tweetsFolder)
 					.onChange(async (value) => {
 						this.plugin.settings.tweetsFolder =
@@ -989,7 +1009,7 @@ class XPostEmbedSettingTab extends PluginSettingTab {
 			.setDesc("Folder where per-author aggregation pages are stored.")
 			.addText((text) =>
 				text
-					.setPlaceholder("tweets/authors")
+					.setPlaceholder("Tweets/authors")
 					.setValue(this.plugin.settings.authorPagesFolder)
 					.onChange(async (value) => {
 						this.plugin.settings.authorPagesFolder =
@@ -1045,7 +1065,7 @@ class XPostEmbedSettingTab extends PluginSettingTab {
 		new Setting(containerEl).setName("Paste to embed").setHeading();
 
 		new Setting(containerEl)
-			.setName("Auto-embed pasted X/Twitter URLs")
+			.setName("Auto-embed pasted X/Twitter links")
 			.setDesc(
 				"When you paste an X/Twitter post URL, automatically fetch the tweet and replace the URL with formatted content."
 			)
@@ -1061,7 +1081,7 @@ class XPostEmbedSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Save pasted tweets as notes")
 			.setDesc(
-				"Also save each pasted tweet as a note file and update the author page (like the Save X post command)."
+				"Also save each pasted tweet as a note file and update the author page (like the save X post command)."
 			)
 			.addToggle((toggle) =>
 				toggle
