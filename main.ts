@@ -10,6 +10,7 @@ import {
 	Setting,
 	TFile,
 	TFolder,
+	normalizePath,
 	requestUrl,
 } from "obsidian";
 
@@ -56,19 +57,6 @@ const DEFAULT_SETTINGS: XPostEmbedSettings = {
 function extractTweetId(url: string): string | null {
 	const match = url.match(/\/status\/(\d+)/);
 	return match ? match[1] : null;
-}
-
-function yamlSafe(value: string): string {
-	return value.replace(/[\\"\n\r\t]/g, (ch) => {
-		switch (ch) {
-			case "\n": return "\\n";
-			case "\r": return "\\r";
-			case "\t": return "\\t";
-			case '"': return '\\"';
-			case "\\": return "\\\\";
-			default: return ch;
-		}
-	});
 }
 
 interface TweetData {
@@ -119,8 +107,7 @@ class TweetUrlModal extends Modal {
 			type: "text",
 			placeholder: "Paste tweet URL here...",
 		});
-		inputEl.addClass("x-post-saver-text");
-		inputEl.style.width = "100%";
+		inputEl.addClass("x-post-saver-input");
 
 		const controlsRow = contentEl.createDiv({
 			cls: "x-post-saver-controls-row",
@@ -148,13 +135,11 @@ class TweetUrlModal extends Modal {
 						this.openAfterSave = value;
 					})
 			);
-		openToggle.settingEl.style.border = "none";
-		openToggle.settingEl.style.padding = "0";
+		openToggle.settingEl.addClass("x-post-saver-inline-toggle");
 
 		const submitBtn = contentEl.createEl("button", { text: "Save" });
 		submitBtn.addClass("mod-cta");
-		submitBtn.style.marginTop = "1rem";
-		submitBtn.style.width = "100%";
+		submitBtn.addClass("x-post-saver-submit");
 		submitBtn.addEventListener("click", () => {
 			this.onSubmit(inputEl.value, this.openAfterSave);
 			this.close();
@@ -745,7 +730,7 @@ export default class XPostEmbedPlugin extends Plugin {
 	}
 
 	async saveTweetAsNote(data: TweetData): Promise<string> {
-		const { tweetsFolder } = this.settings;
+		const tweetsFolder = normalizePath(this.settings.tweetsFolder);
 
 		// Ensure folder exists
 		const folder = this.app.vault.getAbstractFileByPath(tweetsFolder);
@@ -758,17 +743,18 @@ export default class XPostEmbedPlugin extends Plugin {
 		const sanitized = this.sanitizeFileName(
 			`${data.author_name} - ${data.tweet_text.slice(0, 50)}`
 		);
-		let filePath = `${tweetsFolder}/${sanitized}.md`;
+		let filePath = normalizePath(`${tweetsFolder}/${sanitized}.md`);
 
 		// Avoid overwriting
 		let counter = 1;
 		while (this.app.vault.getAbstractFileByPath(filePath)) {
-			filePath = `${tweetsFolder}/${sanitized} (${counter}).md`;
+			filePath = normalizePath(`${tweetsFolder}/${sanitized} (${counter}).md`);
 			counter++;
 		}
 
-		const content = this.createMarkdownContent(data);
-		await this.app.vault.create(filePath, content);
+		const body = this.createMarkdownBody(data);
+		const file = await this.app.vault.create(filePath, body);
+		await this.applyTweetFrontmatter(file, data);
 
 		// Save to author page if enabled
 		if (this.settings.enableAuthorPages) {
@@ -784,7 +770,8 @@ export default class XPostEmbedPlugin extends Plugin {
 	}
 
 	async saveToAuthorPage(data: TweetData, individualNotePath: string): Promise<void> {
-		const { authorPagesFolder, authorPageOrder } = this.settings;
+		const authorPagesFolder = normalizePath(this.settings.authorPagesFolder);
+		const { authorPageOrder } = this.settings;
 
 		// Ensure author pages folder exists
 		const folder = this.app.vault.getAbstractFileByPath(authorPagesFolder);
@@ -795,7 +782,7 @@ export default class XPostEmbedPlugin extends Plugin {
 		}
 
 		const screenName = data.author_screen_name || this.sanitizeFileName(data.author_name);
-		const authorFilePath = `${authorPagesFolder}/${screenName}.md`;
+		const authorFilePath = normalizePath(`${authorPagesFolder}/${screenName}.md`);
 
 		// The embed link (without .md extension for Obsidian wiki-link)
 		const embedLink = `![[${individualNotePath.replace(/\.md$/, "")}]]`;
@@ -804,83 +791,71 @@ export default class XPostEmbedPlugin extends Plugin {
 
 		if (existingFile && existingFile instanceof TFile) {
 			// Author page exists — append or prepend the new embed
-			const currentContent = await this.app.vault.read(existingFile);
+			await this.app.vault.process(existingFile, (currentContent) => {
+				// Skip if this embed already exists on the author page
+				if (currentContent.includes(embedLink)) return currentContent;
 
-			// Skip if this embed already exists on the author page
-			if (currentContent.includes(embedLink)) return;
-
-			let updatedContent: string;
-			if (authorPageOrder === "newest") {
-				// Insert right after the heading line (# Tweets by ...)
-				const headingMatch = currentContent.match(/^(#\s+Tweets by .+\n)/m);
-				if (headingMatch && headingMatch.index !== undefined) {
-					const insertPos = headingMatch.index + headingMatch[0].length;
-					updatedContent =
-						currentContent.slice(0, insertPos) +
-						"\n" + embedLink + "\n" +
-						currentContent.slice(insertPos);
-				} else {
-					// No heading found — prepend after frontmatter
-					const fmEnd = currentContent.indexOf("---", currentContent.indexOf("---") + 3);
-					if (fmEnd !== -1) {
-						const insertPos = currentContent.indexOf("\n", fmEnd) + 1;
-						updatedContent =
-							currentContent.slice(0, insertPos) +
+				if (authorPageOrder === "newest") {
+					// Insert right after the heading line (# Tweets by ...)
+					const headingMatch = currentContent.match(/^(#\s+Tweets by .+\n)/m);
+					if (headingMatch && headingMatch.index !== undefined) {
+						const insertPos = headingMatch.index + headingMatch[0].length;
+						return currentContent.slice(0, insertPos) +
 							"\n" + embedLink + "\n" +
 							currentContent.slice(insertPos);
 					} else {
-						updatedContent = embedLink + "\n\n" + currentContent;
+						// No heading found — prepend after frontmatter
+						const fmEnd = currentContent.indexOf("---", currentContent.indexOf("---") + 3);
+						if (fmEnd !== -1) {
+							const insertPos = currentContent.indexOf("\n", fmEnd) + 1;
+							return currentContent.slice(0, insertPos) +
+								"\n" + embedLink + "\n" +
+								currentContent.slice(insertPos);
+						} else {
+							return embedLink + "\n\n" + currentContent;
+						}
 					}
+				} else {
+					// Oldest first — append at end
+					return currentContent.trimEnd() + "\n\n" + embedLink + "\n";
 				}
-			} else {
-				// Oldest first — append at end
-				updatedContent = currentContent.trimEnd() + "\n\n" + embedLink + "\n";
-			}
-
-			await this.app.vault.modify(existingFile, updatedContent);
+			});
 		} else {
 			// Create new author page
-			const content = this.createAuthorPageContent(data, embedLink);
-			await this.app.vault.create(authorFilePath, content);
+			const screenNameForPage = data.author_screen_name || this.sanitizeFileName(data.author_name);
+			const body = this.createAuthorPageBody(data.author_name, screenNameForPage, embedLink);
+			const file = await this.app.vault.create(authorFilePath, body);
+			await this.applyAuthorFrontmatter(file, data);
 		}
 	}
 
-	private createAuthorPageContent(data: TweetData, embedLink: string): string {
-		const screenName = data.author_screen_name || this.sanitizeFileName(data.author_name);
-
-		let frontmatter = [
-			"---",
-			`author: "${data.author_name}"`,
-			`author_screen_name: "${screenName}"`,
-			`author_url: "${data.author_url}"`,
-		];
-
-		if (data.author_bio) {
-			frontmatter.push(
-				`author_description: "${yamlSafe(data.author_bio.description)}"`,
-				`author_location: "${yamlSafe(data.author_bio.location)}"`,
-				`author_followers: ${data.author_bio.followers}`
-			);
-		}
-
-		frontmatter.push("---");
-
+	private createAuthorPageBody(authorName: string, screenName: string, embedLink: string): string {
 		return [
-			...frontmatter,
-			"",
-			`# Tweets by ${data.author_name} (@${screenName})`,
+			`# Tweets by ${authorName} (@${screenName})`,
 			"",
 			embedLink,
 			"",
 		].join("\n");
 	}
 
+	private async applyAuthorFrontmatter(file: TFile, data: TweetData): Promise<void> {
+		await this.app.fileManager.processFrontMatter(file, (fm) => {
+			fm.author = data.author_name;
+			fm.author_screen_name = data.author_screen_name || this.sanitizeFileName(data.author_name);
+			fm.author_url = data.author_url;
+			if (data.author_bio) {
+				fm.author_description = data.author_bio.description;
+				fm.author_location = data.author_bio.location;
+				fm.author_followers = data.author_bio.followers;
+			}
+		});
+	}
+
 	sanitizeFileName(name: string): string {
 		return name.replace(/[\\/:*?"<>|#^[\]]/g, "").trim();
 	}
 
-	createMarkdownContent(data: TweetData): string {
-		const now = new Date().toISOString();
+	createMarkdownBody(data: TweetData): string {
 		let combinedText = data.thread_texts.join("\n\n");
 
 		if (this.settings.includeCommunityNote && data.community_note) {
@@ -898,30 +873,7 @@ export default class XPostEmbedPlugin extends Plugin {
 			footer += `\n💬 ${data.metrics.replies} | 🔁 ${data.metrics.reposts} | ❤️ ${data.metrics.likes} | 👁️ ${data.metrics.views} | 🔖 ${data.metrics.bookmarks}`;
 		}
 
-		let frontmatter = [
-			"---",
-			`author: "${data.author_name}"`,
-			`author_url: "${data.author_url}"`
-		];
-
-		if (this.settings.includeAuthorBio && data.author_bio) {
-			frontmatter.push(
-				`author_description: "${yamlSafe(data.author_bio.description)}"`,
-				`author_location: "${yamlSafe(data.author_bio.location)}"`,
-				`author_followers: ${data.author_bio.followers}`
-			);
-		}
-
-		frontmatter.push(
-			`tweet_url: "${data.url}"`,
-			`saved_at: "${now}"`,
-			`tweet_date: "${data.tweet_date ?? ""}"`,
-			"---"
-		);
-
 		return [
-			...frontmatter,
-			"",
 			`# Tweet by ${data.author_name}`,
 			"",
 			...(this.settings.metadataAtTop ? [footer, ""] : []),
@@ -929,6 +881,22 @@ export default class XPostEmbedPlugin extends Plugin {
 			...(this.settings.metadataAtTop ? [] : ["", footer]),
 			"",
 		].join("\n");
+	}
+
+	private async applyTweetFrontmatter(file: TFile, data: TweetData): Promise<void> {
+		const now = new Date().toISOString();
+		await this.app.fileManager.processFrontMatter(file, (fm) => {
+			fm.author = data.author_name;
+			fm.author_url = data.author_url;
+			if (this.settings.includeAuthorBio && data.author_bio) {
+				fm.author_description = data.author_bio.description;
+				fm.author_location = data.author_bio.location;
+				fm.author_followers = data.author_bio.followers;
+			}
+			fm.tweet_url = data.url;
+			fm.saved_at = now;
+			fm.tweet_date = data.tweet_date ?? "";
+		});
 	}
 
 	// --- Settings persistence ---
@@ -962,7 +930,7 @@ class XPostEmbedSettingTab extends PluginSettingTab {
 
 		// --- Existing settings ---
 
-		containerEl.createEl("h3", { text: "Save to Note" });
+		new Setting(containerEl).setName("Save to note").setHeading();
 
 		new Setting(containerEl)
 			.setName("Tweets folder")
@@ -1048,7 +1016,7 @@ class XPostEmbedSettingTab extends PluginSettingTab {
 
 		// --- New paste-to-embed settings ---
 
-		containerEl.createEl("h3", { text: "Paste to Embed" });
+		new Setting(containerEl).setName("Paste to embed").setHeading();
 
 		new Setting(containerEl)
 			.setName("Auto-embed pasted X/Twitter URLs")
@@ -1120,7 +1088,7 @@ class XPostEmbedSettingTab extends PluginSettingTab {
 					})
 			);
 
-		containerEl.createEl("h3", { text: "Data Extras" });
+		new Setting(containerEl).setName("Data extras").setHeading();
 
 		new Setting(containerEl)
 			.setName("Include media")

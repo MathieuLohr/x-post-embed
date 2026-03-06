@@ -6,8 +6,18 @@
 	padding: var(--spacing-xs, 0.5rem);
 }
 
-.x-post-saver-text {
-	flex: 1 1 auto;
+.x-post-saver-input {
+	width: 100%;
+}
+
+.x-post-saver-inline-toggle {
+	border: none;
+	padding: 0;
+}
+
+.x-post-saver-submit {
+	margin-top: var(--spacing-m, 1rem);
+	width: 100%;
 }
 
 .x-post-saver-controls-row .mod-cta,
