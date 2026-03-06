@@ -1,0 +1,14 @@
+# Build output
+main.js
+
+# npm
+node_modules
+
+# OS
+.DS_Store
+
+# IDE
+.vscode
+
+# Obsidian
+data.json
