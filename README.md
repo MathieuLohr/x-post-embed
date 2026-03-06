@@ -1,4 +1,4 @@
-# X Post Embed
+# X/Twitter Post Embed
 
 An Obsidian plugin that automatically embeds X (formerly Twitter) post text when you paste a URL. Also saves posts as individual notes via the command palette.
 
@@ -18,13 +18,13 @@ An Obsidian plugin that automatically embeds X (formerly Twitter) post text when
 ### From Obsidian Community Plugins
 
 1. Open Settings > Community Plugins
-2. Search for "X Post Embed"
+2. Search for "X/Twitter Post Embed"
 3. Click Install, then Enable
 
 ### Manual Installation
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from the latest release
-2. Create a folder `x-post-embed` in your vault's `.obsidian/plugins/` directory
+2. Create a folder `x-twitter-post-embed` in your vault's `.obsidian/plugins/` directory
 3. Copy the downloaded files into that folder
 4. Enable the plugin in Settings > Community Plugins
 

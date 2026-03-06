@@ -1,6 +1,6 @@
 {
-	"id": "x-post-embed",
-	"name": "X Post Embed",
+	"id": "x-twitter-post-embed",
+	"name": "X/Twitter Post Embed",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
 	"description": "Automatically embeds X (formerly Twitter) post text when pasting a URL. Also saves posts as notes via command palette.",
